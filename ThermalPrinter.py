@@ -53,7 +53,6 @@ class ThermalPrinter:
         if self.cut:
             self.addCut()
         self.ser.write(self.printBuffer)
-        while self.ser.out_waiting > 0: pass
         self.clearBuffer()
 
     def addRaw(self, raw):

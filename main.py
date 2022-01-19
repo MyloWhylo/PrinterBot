@@ -10,11 +10,11 @@ client = discord.Client()
 printer = None
 prevMsg = None
 
-def findUrls(inputString):
+def findURLs(inputString):
     regex=r"\b((?:https?://)?(?:(?:www\.)?(?:[\da-z\.-]+)\.(?:[a-z]{2,6})|(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)|(?:(?:[0-9a-fA-F]{1,4}:){7,7}[0-9a-fA-F]{1,4}|(?:[0-9a-fA-F]{1,4}:){1,7}:|(?:[0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|(?:[0-9a-fA-F]{1,4}:){1,5}(?::[0-9a-fA-F]{1,4}){1,2}|(?:[0-9a-fA-F]{1,4}:){1,4}(?::[0-9a-fA-F]{1,4}){1,3}|(?:[0-9a-fA-F]{1,4}:){1,3}(?::[0-9a-fA-F]{1,4}){1,4}|(?:[0-9a-fA-F]{1,4}:){1,2}(?::[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:(?:(?::[0-9a-fA-F]{1,4}){1,6})|:(?:(?::[0-9a-fA-F]{1,4}){1,7}|:)|fe80:(?::[0-9a-fA-F]{0,4}){0,4}%[0-9a-zA-Z]{1,}|::(?:ffff(?::0{1,4}){0,1}:){0,1}(?:(?:25[0-5]|(?:2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(?:25[0-5]|(?:2[0-4]|1{0,1}[0-9]){0,1}[0-9])|(?:[0-9a-fA-F]{1,4}:){1,4}:(?:(?:25[0-5]|(?:2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(?:25[0-5]|(?:2[0-4]|1{0,1}[0-9]){0,1}[0-9])))(?::[0-9]{1,4}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5])?(?:/[\w\.-]*)*/?)\b"
 
-    matches = re.findall(regex, inputString)
-    return matches
+    return re.findall(regex, inputString)
+
 
 def exit_handler():
     printer.close()
@@ -31,48 +31,58 @@ def fixTimeZone(badTime):
 def handlePrintEvent(message):
     global prevMsg
     
-    if prevMsg is None or prevMsg.channel.id != message.channel.id:
+    if prevMsg is None:
+        guildHeader = channelHeader = authorHeader = True
+    else:
+        guildHeader     = prevMsg.guild.id != message.guild.id
+        channelHeader   = prevMsg.channel.id != message.channel.id
+        authorHeader    = prevMsg.author.id != message.author.id
+        
+    if guildHeader or authorHeader:
+        printer.addLineFeed()
+    
+    
+    if guildHeader:
+        tempString = " " + message.guild.name + " "
+        tempString = tempString.center(printer.lineWidth, '=')
+        printer.addText(tempString)
+        printer.addLineFeed()
+    
+    if channelHeader:
         tempString = " #" + message.channel.name + " "
         tempString = tempString.center(printer.lineWidth, '-')
-        printer.addLineFeed()
         printer.addText(tempString)
+        printer.addLineFeed()
     
-    if prevMsg is None or prevMsg.author.id != message.author.id:
-        printer.addLineFeed()
+    if authorHeader:
         uname = message.author.nick if message.author.nick else message.author.name
-        printer.addText(uname, wrap=False)
-        printer.addLineFeed()
-
         time = fixTimeZone(message.created_at)
-        printer.addText(time.strftime("%b. %d, %I:%M%p"))
+        printer.addText(uname + ", " + time.strftime("%b. %d, %I:%M%p") + ":")
         printer.addLineFeed()
-        printer.addLineFeed()
-
+    
+    
     if message.clean_content:
-        changed = False
         if len(message.clean_content) > 280:
             printer.selectFontB()
-            changed = True
-
-        printer.addText(message.clean_content)
-
-        if changed:
+            printer.addText(message.clean_content)
             printer.selectFontA()
-
+        else:
+            printer.addText(message.clean_content)
+            
         printer.addLineFeed()
-        
-        urls = findUrls(message.clean_content)
-        if len(urls):
-            for ii in range(len(urls)):
-                if urls[ii].lower().endswith(('.png', '.jpg', '.jpeg', '.tiff', '.bmp', '.gif')):
-                    printer.addImage(urls[ii])
-                    printer.addLineFeed()
-
+    
+    urls = findURLs(message.clean_content)
+    if urls:
+        for ii in range(len(urls)):
+            if urls[ii].lower().endswith(('.png', '.jpg', '.jpeg', '.tiff', '.bmp', '.gif')):
+                printer.addImage(urls[ii])
+                printer.addLineFeed()
+    
     if len(message.attachments) > 0:
         for ii in range(len(message.attachments)):
             printer.addImage(message.attachments[ii].url)
             printer.addLineFeed()
-
+    
     printer.flush()
     prevMsg = message
 
