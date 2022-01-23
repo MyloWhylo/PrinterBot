@@ -1,119 +1,128 @@
 import textwrap
 from PIL import Image
 import serial
-import requests
 import math
 import unicodedata
 import sys
 
 
 class ThermalPrinter:
-    def __init__(self, port, baud=9600, flowControl="dsrdtr", paperWidth=3.125, margin=0.15, dpi=180, lineWidth=42, cut=False):
-        self.printBuffer = b''
-        self.ready = False
-        # assumes margin and width are in fractional inches (e.g. 2.25)
-        self.dots = math.floor((paperWidth - (margin*2)) * dpi)
-        self.serialPort = port
-        self.baud = baud
-        self.flowHardware = True if flowControl == "dsrdtr" else False
-        self.flowSoftware = not self.flowHardware
-        self.cut = cut
-        self.lineWidth = lineWidth
-        self.fontA = True
+	def __init__(self, port, baud=9600, dsrdtr=True, paperWidth=3.125, margin=0.15, dpi=180, cut=False):
+		self.ready = False											# Printer is not ready
+		self.serialPort = port										# Set port name
+		self.baud = baud											# Set baud rate
+		self.hardwareFlow = dsrdtr									# Set flow control
+		self.cut = cut												# Auto-cut after flush
+		self.lineWidth = 42											# Default width for 3 1/8" paper
+		self.dots = math.floor((paperWidth - (margin*2)) * dpi)		# Calculate width of image
 
-    def initialize(self):
-        self.ser = serial.Serial(port=self.serialPort, baudrate=self.baud,
-                                 dsrdtr=self.flowHardware, xonxoff=self.flowSoftware)
-        self.ready = True
+	# Basic Functions
+	def initialize(self):
+		self.printBuffer = b''															# Init print buffer
+		self.ser = serial.Serial(port=self.serialPort, baudrate=self.baud,				# Open serial port
+								 dsrdtr=self.hardwareFlow, xonxoff= not self.hardwareFlow)	# ''
+		self.ready = True																# Printer is ready
 
-    def clearBuffer(self):
-        self.printBuffer = b''
+	def close(self):
+		self.ser.close()							# Close serial port
+		self.ready = False							# Printer is not ready
 
-    def addCut(self):
-        self.printBuffer += b'\x1D\x56\x42\x00'  # GS V 66 0
+	def addRaw(self, raw):
+		self.printBuffer += raw                     # Append data to buffer
 
-    def selectFontA(self):
-        self.printBuffer += b'\x1B\x4D\x00'  # ESC M 0
-        self.addRaw(b'\x1B\x33\x3C')
-        self.lineWidth = 42
+	def clearBuffer(self):
+		self.printBuffer = b''						# Set buffer to an empty buffer
 
-    def selectFontB(self):
-        self.printBuffer += b'\x1B\x4D\x01'  # ESC M 1
-        self.addRaw(b'\x1B\x33\x2A')
-        self.lineWidth = 56
+	def flush(self):
+		if self.cut: self.addCut()					# Handle cutting on flush
+		self.ser.write(self.printBuffer)			# Output buffer
+		self.clearBuffer()							# Clear internal buffer
 
-    def logPrintBuffer(self):
-        sys.stdout.buffer.write(self.printBuffer)
+	def logPrintBuffer(self):
+		sys.stdout.buffer.write(self.printBuffer)	# Write raw data to terminal
 
-    def close(self):
-        self.ser.close()
-        self.ready = False
+	# Printer management
+	def selectFontA(self):
+		self.addRaw(b'\x1B\x4D\x00')	# Select character font (ESC M 0)
+		self.addRaw(b'\x1B\x33\x3C')	# Set line spacing (ESC 3 60)
+		self.lineWidth = 42				# Update word wrap variable
 
-    def flush(self):
-        if self.cut:
-            self.addCut()
-        self.ser.write(self.printBuffer)
-        self.clearBuffer()
+	def selectFontB(self):
+		self.addRaw(b'\x1B\x4D\x01')	# Select character font (ESC M 1)
+		self.addRaw(b'\x1B\x33\x2A')	# Set line spacing (ESC 3 42)
+		self.lineWidth = 56				# Update word wrap variable
 
-    def addRaw(self, raw):
-        self.printBuffer += raw
+	def initializePrinter(self):
+		self.clearBuffer()				# Clear internal buffer
+		self.addRaw(b'\x1B\x40')		# Initialize printer (Esc @)
+		self.lineWidth = 42				# Reset word wrap variable
+		self.flush()					# Send command to printer
 
-    def addText(self, text, wrap=True):
-        normalized = unicodedata.normalize('NFKD', text)
-        normalized = normalized.encode('ascii', 'ignore').decode()
+	# Standard printing operations
+	def addText(self, text, wrap=True):
+		normalized = unicodedata.normalize('NFKD', text)                # Convert special characters to normal
+		normalized = normalized.encode('ascii', 'ignore').decode()      # Convert characters to ascii and store
 
-        if wrap:
-            self.printBuffer += bytes(wrapText(normalized,
-                                      self.lineWidth), encoding='ascii')
-        else:
-            self.printBuffer += bytes(normalized, encoding='ascii')
+		if wrap:
+			self.printBuffer += bytes(wrapText(normalized, self.lineWidth), encoding='ascii')   # Handle wrap
+		else:
+			self.printBuffer += bytes(normalized, encoding='ascii')     # Add text!
 
-    def addLineFeed(self):
-        self.printBuffer += b'\n'
+	def addLineFeed(self):
+		self.addRaw(b'\n')                          # Self explanatory :P
 
-    def addImage(self, url):
-        mode = 0
+	def addCut(self):
+		self.addRaw(b'\x1D\x56\x42\x00')            # Select cut mode and cut paper (GS V 66 0)
 
-        response = requests.get(url, stream=True)
-        image = Image.open(response.raw)
+	def addImage(self, inImage):
+		mode = 0                                    # Select either full or half-res mode
+		image = Image.open(inImage)                 # Open the image
 
-        newWidth = image.width if image.width < self.dots else self.dots
-        if image.width < (self.dots / 2): mode = 3
-        newHeight = math.floor((image.height / image.width) * newWidth)
+		newWidth = None                     
+		if image.width < self.dots:                 # If the image is smaller than full-res width:
+			if image.width <= self.dots / 2:            # If the image is smaller than quarter-res width:
+				newWidth = image.width
+				mode = 3                                    # Select quarter-res mode
+			elif image.width > self.dots * (3/4):       # Round up image halfway between two resolutions
+				newWidth = self.dots
+				mode = 0
+			else:                                       #Round down to quarter-res
+				newWidth = math.floor(self.dots / 2)
+				mode = 3
+		else:
+			newWidth = self.dots
 
-        image = image.resize((newWidth, newHeight))
-        image = image.convert("1")
+		newWidth -= newWidth % 8                                            # Make sure width is multiple of 8 bits
+		newHeight = math.floor((image.height / image.width) * newWidth)     # Scale height, preserving aspect ratio
 
-        xL = (newWidth//8) % 256
-        xH = (newWidth//8) // 256
-        yL = newHeight % 256
-        yH = newHeight // 256
+		image = image.resize((newWidth, newHeight))                         # Scale image
+		image = image.convert("1")                                          # Convert to black and white
 
-        temp = b'\x1D\x76\x30'
-        temp += bytes([mode])   # m
-        temp += bytes([xL])  # xL
-        temp += bytes([xH])  # xH
-        temp += bytes([yL])  # yL
-        temp += bytes([yH])  # yH
+		xL = (newWidth >> 3) & 0xFF                 # Get low x byte
+		xH = ((newWidth >> 3) >> 8) & 0xFF          # Get high x byte
+		yL = newHeight & 0xFF                       # Get low y byte
+		yH = (newHeight >> 8) & 0xFF                # Get high y byte
 
-        for y in range((256*yH) + yL):
-            for x in range((256*xH) + xL):
-                a = 0
-                for i in range(8):
-                    pxdat = image.getpixel(((x*8)+i, y)) < 64
-                    a = a | pxdat << 7 >> i
-                temp += bytes([int(a) % 256])
-        self.printBuffer += temp
+		self.addRaw(b'\x1D\x76\x30')				# GS v 0
+		self.addRaw(bytes([mode, xL, xH, yL, yH]))	# print mode, lo x byte, hi x byte, lo y byte, hi x byte
+
+		for y in range((256*yH) + yL):                          # Loop over image vertically
+			for x in range((256*xH) + xL):                      # Loop over image horizontally
+				a = 0
+				for i in range(8):
+					pxdat = image.getpixel(((x*8)+i, y)) < 64   # IDK what any of this does, I didn't write it
+					a = a | pxdat << 7 >> i
+				self.addRaw(bytes([int(a) % 256]))              # Add bytes to print buffer
 
 
 def wrapText(text, width):
-    lines = text.splitlines(True)
-    wrapped = ""
-    for line in lines:
-        if line == '\n':
-            wrapped += '\n'
-            continue
-        wrapped += textwrap.fill(line, width, replace_whitespace=False)
-        if line[-1] == '\n':
-            wrapped += '\n'
-    return wrapped
+	lines = text.splitlines(True)
+	wrapped = ""
+	for line in lines:
+		if line == '\n':
+			wrapped += '\n'
+			continue
+		wrapped += textwrap.fill(line, width, replace_whitespace=False)
+		if line[-1] == '\n':
+			wrapped += '\n'
+	return wrapped
