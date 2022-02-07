@@ -7,7 +7,7 @@ import sys
 
 
 class ThermalPrinter:
-    def __init__(self, port, baud=9600, dsrdtr=True, paperWidth=3.125, margin=0.15, dpi=180, cut=False):
+    def __init__(self, port, baud=9600, dsrdtr=True, cut=False):
         self.ready = False                                          # Printer is not ready
         self.serialPort = port                                      # Set port name
         self.baud = baud                                            # Set baud rate
@@ -19,7 +19,7 @@ class ThermalPrinter:
 
     # Basic Functions
     def initialize(self):
-        self.printBuffer = b''                                                            # Init print buffer
+        self.clearBuffer()                                                                # Init print buffer
         self.ser = serial.Serial(port=self.serialPort, baudrate=self.baud,                # Open serial port
                                  dsrdtr=self.hardwareFlow, xonxoff= not self.hardwareFlow)# ''
         self.ready = True                                                                 # Printer is ready
@@ -65,9 +65,9 @@ class ThermalPrinter:
         normalized = normalized.encode('ascii', 'ignore').decode()      # Convert characters to ascii and store
 
         if wrap:
-            self.printBuffer += bytes(wrapText(normalized, self.lineWidth), encoding='ascii')   # Handle wrap
+            self.addRaw(bytes(wrapText(normalized, self.lineWidth), encoding='ascii'))   # Handle wrap
         else:
-            self.printBuffer += bytes(normalized, encoding='ascii')     # Add text!
+            self.addRaw(bytes(normalized, encoding='ascii'))     # Add text!
 
     def addLineFeed(self):
         self.addRaw(b'\n')                          # Self explanatory :P
@@ -105,7 +105,7 @@ class ThermalPrinter:
         yH = (newHeight >> 8) & 0xFF                # Get high y byte
 
         self.addRaw(b'\x1D\x76\x30')                # GS v 0
-        self.addRaw(bytes([mode, xL, xH, yL, yH]))    # print mode, lo x byte, hi x byte, lo y byte, hi x byte
+        self.addRaw(bytes([mode, xL, xH, yL, yH]))  # print mode, lo x byte, hi x byte, lo y byte, hi x byte
 
         for y in range((256*yH) + yL):                          # Loop over image vertically
             for x in range((256*xH) + xL):                      # Loop over image horizontally
