@@ -131,9 +131,6 @@ async def on_message(message):
 
 
 if __name__ == "__main__":
-    global blockedChannels
-    global blockedGuilds
-
     atexit.register(exit_handler)
 
     config = configparser.ConfigParser()
